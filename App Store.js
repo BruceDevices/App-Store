@@ -705,7 +705,7 @@ function installScript(script) {
 
             var url = ('https://raw.githubusercontent.com/' + fullMetadata.owner + '/' + fullMetadata.repo + '/' + fullMetadata.commit + '/' + repoFilePath).replace(/ /g, '%20');
             var response = wifi.httpFetch(url, {
-                saveAs: { fs: fileSystem, path: localFilePath }
+                save: { fs: fileSystem, path: localFilePath }
             });
             if (response.status === 200) {
                 statusMessage = "Downloading " + (i + 1) + " of " + files.length + "...";
