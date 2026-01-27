@@ -344,8 +344,8 @@ function loadInstalledVersions() {
         installedVersions = {};
     }
 
-    if (!installedVersions["BruceDevices/App-Store:App Store"]) {
-        installedVersions["BruceDevices/App-Store:App Store"] = {
+    if (!installedVersions["BruceDevices/App-Store/App Store"]) {
+        installedVersions["BruceDevices/App-Store/App Store"] = {
             version: "0.0.0",
             commit: ""
         };
