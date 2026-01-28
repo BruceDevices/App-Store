@@ -1,0 +1,53 @@
+name: Minify App Store
+
+on:
+  push:
+    paths:
+      - 'App Store.js'
+  pull_request:
+    paths:
+      - 'App Store.js'
+
+jobs:
+  minify:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Minify JavaScript
+      run: |
+        # Read the App Store.js file content
+        CONTENT=$(cat "App Store.js")
+        
+        # Make POST request to minifier API
+        curl -X POST \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "input=${CONTENT}" \
+          "https://www.toptal.com/developers/javascript-minifier/api/raw" \
+          -o "App Store.min.js"
+        
+        # Check if minification was successful
+        if [ -f "App Store.min.js" ] && [ -s "App Store.min.js" ]; then
+          echo "Minification successful"
+        else
+          echo "Minification failed"
+          exit 1
+        fi
+    
+    - name: Commit minified file
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Check if there are changes to commit
+        if git diff --quiet "App Store.min.js" 2>/dev/null; then
+          echo "No changes to minified file"
+        else
+          git add "App Store.min.js"
+          git commit -m "Minified"
+          git push
+        fi
