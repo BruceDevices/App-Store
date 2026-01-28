@@ -1,3 +1,4 @@
+var device = require("device");
 var display = require("display");
 var keyboard = require("keyboard");
 var storage = require("storage");
@@ -21,6 +22,8 @@ var CATEGORIES_URL = BASE_URL + "releases/categories.json";
 var RELEASES_URL = BASE_URL + "releases/releases.json";
 var SCRIPTS_DIR = "/BruceJS/", THEMES_DIR = "/Themes/";
 var VERSION_FILE = "/BruceAppStore/installed.json";
+var CACHE_DIR = "/BruceAppStore/cache/";
+var LAST_UPDATED_FILE = "/BruceAppStore/lastUpdated.json";
 
 // Data storage
 var availableCategories = [], availableScripts = [], releasesData = {}, installedVersions = {}, updatesAvailable = [];
@@ -47,6 +50,27 @@ function detectFileSystem() {
         fileSystem = confData ? "sd" : "littlefs";
     } catch (e) {
         fileSystem = "littlefs";
+    }
+}
+
+/**
+ * Clear all cached category files
+ */
+function clearCacheFiles() {
+    try {
+        var cacheFiles = storage.readdir({ fs: fileSystem, path: CACHE_DIR });
+        for (var i = 0; i < cacheFiles.length; i++) {
+            if (cacheFiles[i].indexOf(".json") !== -1) {
+                storage.remove({ fs: fileSystem, path: CACHE_DIR + cacheFiles[i] });
+            }
+        }
+        // Remove cache directory if empty
+        var remainingFiles = storage.readdir({ fs: fileSystem, path: CACHE_DIR });
+        if (remainingFiles.length === 0) {
+            storage.remove({ fs: fileSystem, path: CACHE_DIR });
+        }
+    } catch (e) {
+        // Cache directory doesn't exist or other error - ignore
     }
 }
 
@@ -263,15 +287,43 @@ function loadAvailableCategories() {
 
         if (response.status === 200) {
             availableCategories = response.body;
+            
+            // Check if we need to clear cache based on lastUpdated
+            var newLastUpdated = availableCategories.lastUpdated || 0;
+            var storedLastUpdated = 0;
+            
+            try {
+                var lastUpdatedData = storage.read({ fs: fileSystem, path: LAST_UPDATED_FILE });
+                if (lastUpdatedData) {
+                    var parsedData = JSON.parse(lastUpdatedData);
+                    storedLastUpdated = parsedData.lastUpdated || 0;
+                }
+            } catch (e1) {
+                // No stored lastUpdated file or invalid, treat as 0
+            }
+            
+            // If lastUpdated has changed, clear cache and update stored value
+            if (newLastUpdated > storedLastUpdated) {
+                clearCacheFiles();
+                try {
+                    storage.write({ fs: fileSystem, path: LAST_UPDATED_FILE }, 
+                        JSON.stringify({ lastUpdated: newLastUpdated }, null, 2), "write");
+                } catch (e2) {
+                    // Ignore write errors
+                }
+            }
 
             currentView = "categories";
             createUpdatesCategory();
+            
+            // Preload all category files if not cached
+            preloadCategoryFiles();
         } else {
             statusMessage = "Failed Loading Scripts (HTTP " + response.status + ")";
         }
 
-    } catch (e) {
-        statusMessage = "Network error (C): " + e.message;
+    } catch (e3) {
+        statusMessage = "Network error (C): " + e3.message;
     }
 
     isLoadingScripts = false;
@@ -280,14 +332,110 @@ function loadAvailableCategories() {
 }
 
 /**
+ * Preload all category files on startup if not already cached
+ */
+function preloadCategoryFiles() {
+    if (!availableCategories || !availableCategories.categories) return;
+    
+    var currentDeviceBoard = device.getBoard();
+    var currentResolution = displayWidth + "x" + displayHeight;
+    
+    for (var c = 0; c < availableCategories.categories.length; c++) {
+        var category = availableCategories.categories[c];
+        if (category.slug === "updates") continue; // Skip updates category
+        
+        var cacheFileName = CACHE_DIR + "category-" + category.slug + ".json";
+        
+        // Check if cache file already exists
+        var needsDownload = true;
+        try {
+            var cachedData = storage.read({ fs: fileSystem, path: cacheFileName });
+            if (cachedData) {
+                needsDownload = false;
+            }
+        } catch (e1) {
+            // Cache doesn't exist, need to download
+        }
+        
+        if (needsDownload) {
+            try {
+                console.log("Downloading category file: category-" + category.slug + ".json");
+                var response = wifi.httpFetch(BASE_URL + "releases/category-" + category.slug + ".json", {
+                    method: "GET",
+                    responseType: "json"
+                });
+                
+                if (response.status === 200) {
+                    console.log("Successfully downloaded category-" + category.slug + ".json");
+                    var categoryData = response.body;
+                    
+                    // Apply filtering before caching
+                    var filteredApps = [];
+                    var isThemesCategory = category.slug === "themes" || (category.name && category.name.toLowerCase().indexOf("theme") !== -1);
+                    
+                    for (var i = 0; i < categoryData.apps.length; i++) {
+                        var app = categoryData.apps[i];
+                        var includeApp = true;
+                        
+                        // Check device compatibility for all apps
+                        if (app["supported-devices"] && !isThemesCategory) {
+                            var deviceMatches = false;
+                            
+                            if (typeof app["supported-devices"] === "string") {
+                                var regex = new RegExp(app["supported-devices"]);
+                                deviceMatches = regex.test(currentDeviceBoard);
+                            } else if (app["supported-devices"].length > 0) {
+                                for (var d = 0; d < app["supported-devices"].length; d++) {
+                                    var pattern = app["supported-devices"][d];
+                                    var regex = new RegExp(pattern);
+                                    if (regex.test(currentDeviceBoard)) {
+                                        deviceMatches = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (!deviceMatches) {
+                                includeApp = false;
+                            }
+                        }
+                        
+                        // Additional screen size check for themes only
+                        if (includeApp && isThemesCategory) {
+                            if (app["supported-screen-size"] && app["supported-screen-size"] !== currentResolution) {
+                                includeApp = false;
+                            }
+                        }
+                        
+                        if (includeApp) {
+                            filteredApps.push(app);
+                        }
+                    }
+                    
+                    categoryData.apps = filteredApps;
+                    categoryData.count = filteredApps.length;
+                    
+                    // Cache the filtered data
+                    try {
+                        storage.write({ fs: fileSystem, path: cacheFileName }, JSON.stringify(categoryData, null, 2), "write");
+                    } catch (e2) {
+                        // Ignore cache write errors
+                    }
+                }
+            } catch (e3) {
+                // Ignore download errors for preloading
+            }
+        }
+    }
+}
+
+/**
  * Load available scripts category
  */
 function loadCategory(category) {
-    isLoadingScripts = true;
-    displayInterface();
-
     try {
-        if (!wifi.connected()) {
+        // WiFi check needed for updates category
+        if (category.slug === "updates" && !wifi.connected()) {
             statusMessage = "WiFi not connected. Connect via WiFi menu first.";
             isLoadingScripts = false;
             displayInterface();
@@ -297,19 +445,22 @@ function loadCategory(category) {
         if (category.slug === "updates") {
             availableScripts = updatesAvailable;
         } else {
-            var response = wifi.httpFetch(BASE_URL + "releases/category-" + category.slug + ".json", {
-                method: "GET",
-                responseType: "json"
-            });
-
-            if (response.status === 200) {
-                availableScripts = response.body;
-            } else {
-                statusMessage = "Failed Loading Scripts (HTTP " + response.status + ")";
+            // Load from cache (should always exist due to preloading)
+            var cacheFileName = CACHE_DIR + "category-" + category.slug + ".json";
+            
+            try {
+                var cachedData = storage.read({ fs: fileSystem, path: cacheFileName });
+                if (cachedData) {
+                    availableScripts = JSON.parse(cachedData);
+                } else {
+                    statusMessage = "Category data not available. Please restart app.";
+                }
+            } catch (e1) {
+                statusMessage = "Error loading category data. Please restart app.";
             }
         }
-    } catch (e) {
-        statusMessage = "Network error (D): " + e.message;
+    } catch (e2) {
+        statusMessage = "Error loading category: " + e2.message;
     }
 
     isLoadingScripts = false;
@@ -503,7 +654,24 @@ function drawCategoryView() {
 
     var categoryName = availableCategories.categories[currentScript].name;
     var totalCategories = availableCategories.totalCategories;
-    var totalApps = availableCategories.categories[currentScript].count;
+    var totalApps = availableCategories.categories[currentScript].count; // Default from categories.json
+    
+    // Try to get actual filtered count from cached category file
+    if (categoryName !== "Updates") {
+        var categorySlug = availableCategories.categories[currentScript].slug;
+        var cacheFileName = CACHE_DIR + "category-" + categorySlug + ".json";
+        try {
+            var cachedData = storage.read({ fs: fileSystem, path: cacheFileName });
+            if (cachedData) {
+                var parsedCache = JSON.parse(cachedData);
+                if (parsedCache.count !== undefined) {
+                    totalApps = parsedCache.count; // Use filtered count from cache
+                }
+            }
+        } catch (e) {
+            // Use default count from categories.json if cache read fails
+        }
+    }
 
     // Display current category info
     display.setTextSize(1 + fontScale);
@@ -607,7 +775,7 @@ function drawScriptView() {
         if (installedVersions[script.slug] && installedVersions[script.slug].version) {
             installedVer = installedVersions[script.slug].version;
         }
-        
+
         display.drawText("Available: " + script.version,
             displayWidth / 2, displayHeight / 10 * 9 - ((fontScale + 1) * 3));
         if (installedVer !== 'None') {
@@ -704,15 +872,18 @@ function installScript(script) {
             }
 
             var url = ('https://raw.githubusercontent.com/' + fullMetadata.owner + '/' + fullMetadata.repo + '/' + fullMetadata.commit + '/' + repoFilePath).replace(/ /g, '%20');
+            console.log("Downloading file " + (i + 1) + " of " + files.length + ": " + repoFilePath);
             var response = wifi.httpFetch(url, {
                 save: { fs: fileSystem, path: localFilePath }
             });
             if (response.status === 200) {
+                console.log("Successfully downloaded: " + repoFilePath);
                 statusMessage = "Downloading " + (i + 1) + " of " + files.length + "...";
                 displayInterface();
 
-                    success++;
+                success++;
             } else {
+                console.log("Failed to download " + repoFilePath + ": HTTP " + response.status);
                 errors++;
                 statusMessage = "Download failed: HTTP " + response.status + " for " + files[i].source;
             }
@@ -744,33 +915,53 @@ function installScript(script) {
 function createUpdatesCategory() {
     try {
         updatesAvailable = { "category": "Updates", "slug": "updates", "count": 0, "apps": [] };
-        var response = wifi.httpFetch(RELEASES_URL, {
-            method: "GET",
-            responseType: "json"
-        });
-        if (response.status === 200) {
-            releasesData = response.body;
-        } else {
-            statusMessage = "Failed Loading Scripts (HTTP " + response.status + ")";
-            return;
-        }
-
-        // Go through all categories and scripts to find apps with updates
-        for (var i = 0; i < releasesData.apps.length; i++) {
-            var app = releasesData.apps[i];
-            var installed = installedVersions[app.slug];
-            //TODO: needs separate function
-            if (installed && installed.version) {
-                var installedVersion = installed.version;
-            } else {
-                var installedVersion = null;
+        
+        if (!availableCategories || !availableCategories.categories) return;
+        
+        // Go through all cached category files to find apps with updates
+        for (var c = 0; c < availableCategories.categories.length; c++) {
+            var category = availableCategories.categories[c];
+            if (category.slug === "updates") continue; // Skip updates category itself
+            
+            var cacheFileName = CACHE_DIR + "category-" + category.slug + ".json";
+            
+            try {
+                var cachedData = storage.read({ fs: fileSystem, path: cacheFileName });
+                if (cachedData) {
+                    var categoryData = JSON.parse(cachedData);
+                    
+                    // Check each app in this category for updates
+                    for (var i = 0; i < categoryData.apps.length; i++) {
+                        var app = categoryData.apps[i];
+                        var installed = installedVersions[app.slug];
+                        
+                        var installedVersion = null;
+                        if (installed && installed.version) {
+                            installedVersion = installed.version;
+                        }
+                        
+                        // Check if app is installed and has an update available
+                        if (installedVersion && installedVersion !== app.version) {
+                            // Check if this app is already in the updates list (avoid duplicates)
+                            var alreadyAdded = false;
+                            for (var u = 0; u < updatesAvailable.apps.length; u++) {
+                                if (updatesAvailable.apps[u].slug === app.slug) {
+                                    alreadyAdded = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!alreadyAdded) {
+                                updatesAvailable.apps.push(app);
+                            }
+                        }
+                    }
+                }
+            } catch (e1) {
+                // Ignore cache read errors for individual categories
             }
-
-            // Check if app is installed and has an update available
-            if (installedVersion && installedVersion !== app.version) {
-                updatesAvailable.apps.push(app);
-            }
         }
+        
         updatesAvailable.count = updatesAvailable.apps.length;
 
         // Remove existing Updates category if present (pre-ES5 compatible)
@@ -800,8 +991,8 @@ function createUpdatesCategory() {
             availableCategories.categories = newCategories;
             availableCategories.totalCategories = availableCategories.categories.length;
         }
-    } catch (e) {
-        statusMessage = "Error creating Updates category: " + e.message;
+    } catch (e2) {
+        statusMessage = "Error creating Updates category: " + e2.message;
     }
 }
 
