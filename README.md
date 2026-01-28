@@ -2,6 +2,10 @@
 
 App store for Bruce devices with over-the-air install and updates for scripts and themes.
 
+## Installation
+
+On your device goto `Config -> Install App Store`.
+
 ## Features
 
 - **Wireless Installation** - Download scripts directly from GitHub repository
@@ -27,17 +31,13 @@ The installer shows different status indicators for each item:
 ## Usage
 
 1. Ensure your Bruce device is connected to WiFi
-2. Run the App Store script
+2. Run the App Store script from `JS Interpreter -> Tools -> App Store`
 3. Browse categories using Next/Previous buttons
 4. Browse available apps/themes using Next/Previous buttons
 5. Select app/theme to install or update with the Select button
 6. Monitor installation progress and status messages
 7. Exit when finished
 
-## Installation
-
-Place the `App Store.js` file in your Bruce device's `/scripts` directory and run it through the `JS Interpreter` menu.
-
 ## How to Publish Your Own App to the App Store?
 
-Read the guide [here](./TBA/).
+Read the guide [here](https://github.com/BruceDevices/App-Store-Data/blob/main/README.md).
