@@ -34,13 +34,15 @@ echo "Configuring git..."
 git config --local user.email "action@github.com"
 git config --local user.name "GitHub Action"
 
+# Add the file to staging area
+git add "minified/App Store.js"
+
 # Check if there are changes to commit
 echo "Checking for changes..."
-if git diff --quiet "minified/App Store.js" 2>/dev/null; then
+if git diff --cached --quiet 2>/dev/null; then
   echo "No changes to minified file - skipping commit"
 else
   echo "Changes detected - committing minified file..."
-  git add "minified/App Store.js"
   git commit -m "Minified"
   git push
   echo "Minified file committed and pushed successfully!"
