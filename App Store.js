@@ -3,7 +3,6 @@ var display = require("display");
 var keyboard = require("keyboard");
 var storage = require("storage");
 var wifi = require("wifi");
-var memoryStats = device.getFreeHeapSize();
 
 // Color palette
 var colours = {
@@ -18,17 +17,13 @@ var colours = {
 };
 
 // Configuration constants
-var BASE_URL = "https://raw.githubusercontent.com/BruceDevices/App-Store-Data/refs/heads/main/";
+var BASE_URL = "http://ghp.iceis.co.uk/service/main/";
 var CATEGORIES_URL = BASE_URL + "releases/categories.json";
 var SCRIPTS_DIR = "/BruceJS/", THEMES_DIR = "/Themes/";
-var VERSION_FILE = "/BruceAppStore/installed.json";
-var CACHE_DIR = "/BruceAppStore/cache/";
-var LAST_UPDATED_FILE = "/BruceAppStore/lastUpdated.json";
+var VERSION_FILE = "/BruceAppStore/installed.json", CACHE_DIR = "/BruceAppStore/cache/", LAST_UPDATED_FILE = "/BruceAppStore/lastUpdated.json";
 
-// Data storage
+// Data storage and application state
 var availableCategories = [], availableScripts = [], releasesData = {}, installedVersions = {}, updatesAvailable = [];
-
-// Application state
 var currentScript = 0, lastCategoryIndex = 0, selectedMenuOption = 0;
 var currentView = "categories", selectedCategory = null;
 var exitApp = false, isLoadingScripts = false, isLoadingCategories = false, isDownloading = false, showMenu = false;
@@ -42,38 +37,7 @@ var dirtyCategories = false, dirtyScripts = false, dirtyActionMenu = false;
 var displayWidth = display.width(), displayHeight = display.height();
 var fontScale = displayWidth > 300 ? 1 : 0;
 var maxCharacters = Math.trunc(displayWidth / (6 * (fontScale + 1)));
-var fontHeight1 = 8 * (1 + fontScale);
-var fontHeight2 = 8 * (2 + fontScale);
-
-
-function checkURL(url) {
-    // console.log("Original URL: " + url);
-    // console.log("ram_free: " + memoryStats.ram_free);
-    // console.log("ram_size: " + memoryStats.ram_size);
-    // console.log("ram_min_free: " + memoryStats.ram_min_free);
-    // console.log("ram_largest_free_block: " + memoryStats.ram_largest_free_block);
-    // console.log("psram_free: " + memoryStats.psram_free);
-    // console.log("psram_size: " + memoryStats.psram_size);
-
-    // TODO: Re-enable PSRAM check when fixed
-    if (1 == 1 || memoryStats.psram_size == 0) {
-        if (url.indexOf("https://raw.githubusercontent.com/BruceDevices/App-Store-Data/refs/heads/main/") !== -1) {
-            url = url.replace(
-                "https://raw.githubusercontent.com/BruceDevices/App-Store-Data/refs/heads/main/",
-                "http://ghp.iceis.co.uk/service/main/"
-            );
-        }
-        else if (url.indexOf("https://raw.githubusercontent.com/") !== -1) {
-            url = url.replace(
-                "https://raw.githubusercontent.com/",
-                "http://ghp.iceis.co.uk/service/manual/"
-            );
-        }
-    }
-
-    // console.log("Modified URL: " + url);
-    return url;
-}
+var fontHeight1 = 8 * (1 + fontScale), fontHeight2 = 8 * (2 + fontScale);
 
 
 /**
@@ -85,27 +49,6 @@ function detectFileSystem() {
         fileSystem = confData ? "sd" : "littlefs";
     } catch (e) {
         fileSystem = "littlefs";
-    }
-}
-
-/**
- * Clear all cached category files
- */
-function clearCacheFiles() {
-    try {
-        var cacheFiles = storage.readdir({ fs: fileSystem, path: CACHE_DIR });
-        for (var i = 0; i < cacheFiles.length; i++) {
-            if (cacheFiles[i].indexOf(".json") !== -1) {
-                storage.remove({ fs: fileSystem, path: CACHE_DIR + cacheFiles[i] });
-            }
-        }
-        // Remove cache directory if empty
-        var remainingFiles = storage.readdir({ fs: fileSystem, path: CACHE_DIR });
-        if (remainingFiles.length === 0) {
-            storage.remove({ fs: fileSystem, path: CACHE_DIR });
-        }
-    } catch (e) {
-        // Cache directory doesn't exist or other error - ignore
     }
 }
 
@@ -164,9 +107,7 @@ function updateDescriptionArea(script) {
 
     // Clear and setup display
     display.drawFillRect(0, descY - 10, displayWidth, 20, colours.black);
-    display.setTextSize(1 + fontScale);
-    display.setTextColor(colours.white);
-    display.setTextAlign('center', 'middle');
+    setDisplayText(1, colours.white);
 
     // Create and display scrolling text
     var paddedText = script.description + "    ";
@@ -183,9 +124,7 @@ function updateNameArea(script) {
 
     // Clear and setup display
     display.drawFillRect(0, nameY - 15, displayWidth, 30, colours.black);
-    display.setTextSize(2 + fontScale);
-    display.setTextColor(colours.green);
-    display.setTextAlign('center', 'middle');
+    setDisplayText(2, colours.green);
 
     // Create and display scrolling text
     var paddedText = script.name + "    ";
@@ -206,19 +145,116 @@ function resetDescriptionScroll() {
 detectFileSystem();
 
 /**
+ * Helper function to get installed version for a script
+ */
+function getInstalledVersion(script) {
+    var installed = installedVersions[script.slug];
+    return (installed && installed.version) ? installed.version : null;
+}
+
+/**
+ * Helper function to set display text properties
+ */
+function setDisplayText(size, color, align) {
+    display.setTextSize(size + fontScale);
+    display.setTextColor(color);
+    display.setTextAlign(align || 'center', 'middle');
+}
+
+/**
+ * Helper function to construct file paths consistently
+ */
+function getLocalFilePath(file, baseLocalDir, category) {
+    if (file && typeof file === 'object' && file.destination) {
+        return baseLocalDir + category + '/' + file.destination.replace(/^\/+/, '');
+    }
+    return baseLocalDir + category + '/' + file.replace(/^\/+/, '');
+}
+
+/**
+ * Helper function to draw version info consistently
+ */
+function drawVersionInfo(script, startLine) {
+    if (script.version !== 'UNKNOWN') {
+        var installedVer = getInstalledVersion(script) || "None";
+        drawText("Available: " + script.version, 1, "C", "G" + startLine, colours.grey);
+        if (installedVer !== 'None') {
+            drawText("Installed: " + installedVer, 1, "C", "G" + (startLine + 1), colours.grey);
+        }
+    }
+}
+
+/**
+ * Helper function to check WiFi and display error if needed
+ */
+function checkWiFiConnection() {
+    if (!wifi.connected()) {
+        displayPopup("WiFi not connected");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Helper function to display scrolling text
+ */
+function drawScrollingText(text, centerX, y, scrollOffset) {
+    var maxCharacters = Math.floor(displayWidth / (6 + fontScale));
+    if (text.length > maxCharacters) {
+        var displayText = text + "    ";
+        var startPos = scrollOffset % displayText.length;
+        var scrolledText = displayText.substring(startPos) + displayText.substring(0, startPos);
+        var visibleText = scrolledText.substring(0, maxCharacters);
+        display.setTextAlign('left', 'middle');
+        display.drawText(visibleText, 0, y);
+    } else {
+        display.setTextAlign('center', 'middle');
+        display.drawText(text, centerX, y);
+    }
+}
+
+/**
+ * Helper function for quick text drawing
+ */
+function quickDrawText(text, size, align, position, color) {
+    setDisplayText(size, color, align);
+    drawText(text, size, align, position, color);
+}
+
+/**
+ * Helper function to check device compatibility
+ */
+function checkDeviceCompatibility(app, currentDeviceBoard, isThemesCategory, currentResolution) {
+    if (app["sd"] && !isThemesCategory) {
+        var deviceMatches = false;
+        var devices = app["sd"];
+        
+        if (typeof devices === "string") {
+            deviceMatches = new RegExp(devices).test(currentDeviceBoard);
+        } else if (devices.length > 0) {
+            deviceMatches = devices.some(function(device) {
+                return new RegExp(device).test(currentDeviceBoard);
+            });
+        }
+        if (!deviceMatches) return false;
+    }
+    
+    // Additional screen size check for themes only
+    if (isThemesCategory && app["sss"] && app["sss"] !== currentResolution) {
+        return false;
+    }
+    
+    return true;
+}
+
+/**
  * Show action menu for current script
  */
 function showActionMenu(script) {
     showMenu = true;
     selectedMenuOption = 0;
 
-    var installed = installedVersions[script.slug];
-    //TODO: needs separate function
-    if (installed && installed.version) {
-        var installedVersion = installed.version;
-    } else {
-        var installedVersion = null;
-    }
+    var installedVersion = getInstalledVersion(script);
     var isInstalled = !!installedVersion;
     var hasUpdate = isInstalled && installedVersion !== script.version;
 
@@ -255,8 +291,23 @@ function executeMenuAction(script) {
 /**
  * Delete a script
  */
+/**
+ * Helper function to show popup and clear after delay
+ */
+function showPopup(message) {
+    displayPopup(message);
+    clearPopupAfterDelay();
+}
+
+/**
+ * Helper function to show interface with optional progress
+ */
+function showInterface(title, text, showProgress) {
+    displayInterfaceNew(title, text, showProgress);
+}
+
 function deleteScript(script) {
-    displayInterfaceNew(script.name, "Deleting...", true);
+    showInterface(script.name, "Deleting", true);
     try {
         var fullMetadata = loadFullMetadata(script);
         var files = fullMetadata.files || [];
@@ -264,19 +315,14 @@ function deleteScript(script) {
         var deletedAny = false;
 
         for (var i = 0; i < files.length; i++) {
-            displayInterfaceNew(script.name, "Deleting file " + (i + 1) + " of " + files.length);
-            if (files[i] && typeof files[i] === 'object' && files[i].source && files[i].destination) {
-                var localFilePath = baseLocalDir + fullMetadata.category + '/' + files[i].destination.replace(/^\/+/, '');
-            } else {
-                var localFilePath = baseLocalDir + fullMetadata.category + '/' + files[i].replace(/^\/+/, '');
-            }
+            showInterface(script.name, "Deleting file " + (i + 1) + " of " + files.length);
+            var localFilePath = getLocalFilePath(files[i], baseLocalDir, fullMetadata.category);
 
             if (storage.remove({ fs: fileSystem, path: localFilePath })) {
                 deletedAny = true;
             }
-
         }
-        displayInterfaceNew(script.name, "Finalizing deletion...");
+        showInterface(script.name, "Finalizing deletion");
 
         if (deletedAny) {
             var filesInDir = storage.readdir({ fs: fileSystem, path: baseLocalDir + fullMetadata.category });
@@ -287,17 +333,15 @@ function deleteScript(script) {
             delete installedVersions[script.slug];
             saveInstalledVersions();
             dirtyScripts = true;
-            displayInterfaceNew("", "");
+            showInterface("", "");
             drawScriptView();
-            displayPopup("Deleted successfully!");
+            showPopup("Deleted successfully!");
         } else {
-            displayPopup("Failed to delete script files");
+            showPopup("Failed deleting");
         }
     } catch (e) {
-        displayPopup("Error deleting script: " + e.message);
+        showPopup("Err: " + e.message);
     }
-
-    clearPopupAfterDelay();
 }
 
 // Load installed versions
@@ -311,17 +355,15 @@ loadAvailableCategories();
  */
 function loadAvailableCategories() {
     isLoadingCategories = true;
-    displayInterfaceNew("Launching", "Fetching categories...");
+    displayInterfaceNew("Launching", "Loading categories");
 
     try {
-        if (!wifi.connected()) {
-            displayPopup("WiFi not connected. Connect via WiFi menu first.");
+        if (!checkWiFiConnection()) {
             isLoadingCategories = false;
             return;
         }
         console.log("Fetching categories from: " + CATEGORIES_URL);
-        var url = checkURL(CATEGORIES_URL);
-        var response = wifi.httpFetch(url, {
+        var response = wifi.httpFetch(CATEGORIES_URL, {
             method: "GET",
             responseType: "json"
         });
@@ -337,11 +379,11 @@ function loadAvailableCategories() {
             createUpdatesCategory();
 
         } else {
-            displayPopup("Failed Loading Scripts (HTTP " + response.status + ")");
+            displayPopup("Err: " + response.status);
         }
 
-    } catch (e3) {
-        displayPopup("Network error (C): " + e3.message);
+    } catch (e) {
+        displayPopup("Err: " + e.message);
     }
     displayPopup("");
     isLoadingCategories = false;
@@ -364,7 +406,7 @@ function preloadCategoryFiles() {
             var parsedData = JSON.parse(lastUpdatedData);
             storedTimestamps = parsedData.categories || [];
         }
-    } catch (e) {
+    } catch (e1) {
         // No stored file or invalid, use empty array
     }
 
@@ -373,7 +415,7 @@ function preloadCategoryFiles() {
 
     for (var c = 0; c < availableCategories.categories.length; c++) {
         var category = availableCategories.categories[c];
-        displayInterfaceNew("Launching", "Processing " + category.name + "...");
+        displayInterfaceNew("Launching", "Processing " + category.name);
 
         console.log("Processing category: " + category.slug);
 
@@ -384,25 +426,19 @@ function preloadCategoryFiles() {
         var categoryLastUpdated = category.lastUpdated || 0;
 
         // Find stored timestamp for this category
-        var storedLastUpdated = 0;
-        var timestampIndex = -1;
-        for (var t = 0; t < storedTimestamps.length; t++) {
-            if (storedTimestamps[t].slug === category.slug) {
-                storedLastUpdated = storedTimestamps[t].lastUpdated || 0;
-                timestampIndex = t;
-                break;
-            }
-        }
+        var timestampEntry = storedTimestamps.find(function(entry) {
+            return entry.slug === category.slug;
+        });
+        var storedLastUpdated = timestampEntry ? (timestampEntry.lastUpdated || 0) : 0;
+        var timestampIndex = timestampEntry ? storedTimestamps.indexOf(timestampEntry) : -1;
 
         // Check if cache file needs to be updated
         var needsDownload = categoryLastUpdated > storedLastUpdated;
 
         if (!needsDownload) {
-            needsDownload = true;
             try {
-                var existingCache = storage.read({ fs: fileSystem, path: cacheFileName });
-                needsDownload = !existingCache;
-            } catch (e_check) {
+                needsDownload = !storage.read({ fs: fileSystem, path: cacheFileName });
+            } catch (e2) {
                 needsDownload = true;
             }
         }
@@ -410,8 +446,7 @@ function preloadCategoryFiles() {
         if (needsDownload) {
             try {
                 console.log("Downloading category file: category-" + category.slug + ".json (lastUpdated: " + categoryLastUpdated + " > stored: " + storedLastUpdated + ")");
-                var url = checkURL(BASE_URL + "releases/category-" + category.slug + ".json");
-                var response = wifi.httpFetch(url, {
+                var response = wifi.httpFetch(BASE_URL + "releases/category-" + category.slug + ".json", {
                     method: "GET",
                     responseType: "json"
                 });
@@ -426,39 +461,7 @@ function preloadCategoryFiles() {
 
                     for (var i = 0; i < categoryData.apps.length; i++) {
                         var app = categoryData.apps[i];
-                        var includeApp = true;
-
-                        // Check device compatibility for all apps
-                        if (app["supported-devices"] && !isThemesCategory) {
-                            var deviceMatches = false;
-
-                            if (typeof app["supported-devices"] === "string") {
-                                var regex = new RegExp(app["supported-devices"]);
-                                deviceMatches = regex.test(currentDeviceBoard);
-                            } else if (app["supported-devices"].length > 0) {
-                                for (var d = 0; d < app["supported-devices"].length; d++) {
-                                    var pattern = app["supported-devices"][d];
-                                    var regex = new RegExp(pattern);
-                                    if (regex.test(currentDeviceBoard)) {
-                                        deviceMatches = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (!deviceMatches) {
-                                includeApp = false;
-                            }
-                        }
-
-                        // Additional screen size check for themes only
-                        if (includeApp && isThemesCategory) {
-                            if (app["supported-screen-size"] && app["supported-screen-size"] !== currentResolution) {
-                                includeApp = false;
-                            }
-                        }
-
-                        if (includeApp) {
+                        if (checkDeviceCompatibility(app, currentDeviceBoard, isThemesCategory, currentResolution)) {
                             filteredApps.push(app);
                         }
                     }
@@ -484,19 +487,19 @@ function preloadCategoryFiles() {
                         try {
                             storage.write({ fs: fileSystem, path: LAST_UPDATED_FILE },
                                 JSON.stringify({ categories: storedTimestamps }, null, 2), "write");
-                        } catch (e_ts) {
+                        } catch (e3) {
                             // Ignore timestamp save errors
                         }
-                    } catch (e2) {
+                    } catch (e4) {
                         // Don't update timestamps if cache write failed
-                        console.log("Error saving cache file for category " + category.slug + ": " + e2.message);
+                        console.log("Error saving cache file for category " + category.slug + ": " + e4.message);
                     }
                 } else {
                     console.log("Failed to download category-" + category.slug + ".json: HTTP " + response.status);
                 }
-            } catch (e3) {
+            } catch (e5) {
                 // Log download errors for preloading
-                console.log("Error downloading category " + category.slug + ": " + e3.message);
+                console.log("Error downloading category " + category.slug + ": " + e5.message);
             }
         } else {
             console.log("Category " + category.slug + " is up to date (stored: " + storedLastUpdated + ", remote: " + categoryLastUpdated + ")");
@@ -510,9 +513,8 @@ function preloadCategoryFiles() {
 function loadCategory(category) {
     try {
         // WiFi check needed for updates category
-        if (category.slug === "updates" && !wifi.connected()) {
+        if (category.slug === "updates" && !checkWiFiConnection()) {
             isLoadingScripts = false;
-            displayInterfaceNew("WiFi not connected. Connect via WiFi menu first.");
             return;
         }
 
@@ -527,14 +529,14 @@ function loadCategory(category) {
                 if (cachedData) {
                     availableScripts = JSON.parse(cachedData);
                 } else {
-                    displayPopup("Category data not available. Please restart app.");
+                    displayPopup("Error loading category data");
                 }
             } catch (e1) {
-                displayPopup("Error loading category data. Please restart app.");
+                displayPopup("Error loading category data");
             }
         }
     } catch (e2) {
-        displayPopup("Error loading category: " + e2.message);
+        displayPopup("Err: " + e2.message);
     }
 
     isLoadingScripts = false;
@@ -545,17 +547,16 @@ function loadCategory(category) {
 
 function loadFullMetadata(script) {
     try {
-        var url = checkURL(BASE_URL + 'repositories/' + script.slug.replace(/ /g, '%20') + '/metadata.json');
-        var response = wifi.httpFetch(url, {
+        var response = wifi.httpFetch(BASE_URL + 'repositories/' + script.slug.replace(/ /g, '%20') + '/metadata.json', {
             method: "GET",
             responseType: "json"
         });
         if (response.status === 200) {
             return response.body;
         }
-        displayPopup("Failed Loading Metadata (HTTP " + response.status + ")");
+        displayPopup("Err (A): " + response.status);
     } catch (e) {
-        displayPopup("Network error (B): " + e.message);
+        displayPopup("Err (B): " + e.message);
     }
 }
 
@@ -605,13 +606,7 @@ function needsUpdate(script) {
  * Get status indicator for script
  */
 function getScriptStatus(script) {
-    var installed = installedVersions[script.slug];
-    //TODO: needs separate function
-    if (installed && installed.version) {
-        var installedVersion = installed.version;
-    } else {
-        var installedVersion = null;
-    }
+    var installedVersion = getInstalledVersion(script);
     if (!installedVersion) return { text: "NOT INSTALLED", color: colours.yellow };
     if (installedVersion !== script.version) return { text: "UPDATE AVAILABLE", color: colours.orange };
     return { text: "UP TO DATE", color: colours.green };
@@ -666,9 +661,7 @@ function displayPopup(message) {
     console.log("Display Popup After Set: |" + popupMessage + "|" + redrawNeeded + "|");
     if (!redrawNeeded) return;
     console.log("Displaying popup: " + popupMessage);
-    display.setTextSize(1 + fontScale);
-    display.setTextColor(colours.orange);
-    display.setTextAlign('center', 'middle');
+    setDisplayText(1, colours.orange);
 
     var lines = splitTextIntoLines(popupMessage);
     var boxHeight = lines.length * (fontScale + 1) * 8 + 20;
@@ -689,10 +682,10 @@ function displayPopup(message) {
     display.drawRect(boxX, boxY, boxWidth, boxHeight, colours.orange);
 
     // Draw text lines
-    for (var i = 0; i < lines.length; i++) {
+    lines.forEach(function(line, i) {
         var textY = boxY + 18 + (i * (fontScale + 1) * 8);
-        display.drawText(lines[i], displayWidth / 2, textY);
-    }
+        display.drawText(line, displayWidth / 2, textY);
+    });
 }
 
 /**
@@ -713,16 +706,16 @@ function drawActionMenu() {
         display.drawRect(menuX, menuY, menuWidth, menuHeight, colours.white);
 
         // Draw menu options
-        display.setTextSize(1 + fontScale);
-        for (var k = 0; k < menuOptions.length; k++) {
+        setDisplayText(1, null, null); // Will be set individually for each option
+        menuOptions.forEach(function(option, k) {
             var optionY = menuY + 16 + (k * (fontScale + 1) * 10);
             var optionColor = (k === selectedMenuOption) ? colours.green : colours.grey;
             var prefix = (k === selectedMenuOption) ? "> " : "  ";
 
             display.setTextColor(optionColor);
             display.setTextAlign('left', 'middle');
-            display.drawText(prefix + menuOptions[k], menuX + 10, optionY);
-        }
+            display.drawText(prefix + option, menuX + 10, optionY);
+        });
     }
 }
 
@@ -734,8 +727,8 @@ function drawCategoryView() {
         dirtyCategories = false;
         console.log("Drawing category view");
         if (availableCategories.totalCategories === 0) {
-            drawText("No categories available", 1, "center", "G6", colours.red);
-            drawText("Check network connection", 1, "center", "G7", colours.white);
+            drawText("No categories available", 1, "C", "G6", colours.red);
+            drawText("Check WiFi", 1, "C", "G7", colours.white);
             return;
         }
 
@@ -763,17 +756,17 @@ function drawCategoryView() {
         }
 
         // Display current category info
-        drawText((currentScript + 1) + " of " + totalCategories, 1, "center", "G3", colours.white);
+        drawText((currentScript + 1) + " of " + totalCategories, 1, "C", "G3", colours.white);
 
         // Category name with special styling for Updates
         var nameText = categoryName === "Updates" ? "* " + categoryName + " *" : categoryName;
-        drawText(nameText, 2, "center", "G5", categoryName === "Updates" ? colours.orange : colours.green);
+        drawText(nameText, 2, "C", "G5", categoryName === "Updates" ? colours.orange : colours.green);
 
         // Category description
         var descText = categoryName === "Updates"
             ? totalApps + " Update" + (totalApps === 1 ? "" : "s") + " Available"
             : totalApps + (categoryName === "Theme" ? " theme" : " App") + (totalApps === 1 ? "" : "s");
-        drawText(descText, 1, "center", "G7", colours.white);
+        drawText(descText, 1, "C", "G7", colours.white);
     }
 }
 
@@ -785,8 +778,8 @@ function drawScriptView() {
         dirtyScripts = false;
         display.drawFillRect(0, fontHeight2 + 1, displayWidth, displayHeight, colours.black);
         if (availableScripts.apps.length === 0) {
-            drawText("No apps in category", 1, "center", "G4", colours.red);
-            drawText("Press ESC to go back", 1, "center", "G6", colours.white);
+            drawText("No apps in category", 1, "C", "G4", colours.red);
+            drawText("Press ESC to go back", 1, "C", "G6", colours.white);
             return;
         }
 
@@ -797,58 +790,23 @@ function drawScriptView() {
 
         // Show category name and position
         if (selectedCategory) {
-            drawText(selectedCategory.name + "      " + (currentScript + 1) + " of " + availableScripts.apps.length, 1, "center", "G2", colours.white);
+            drawText(selectedCategory.name + "      " + (currentScript + 1) + " of " + availableScripts.apps.length, 1, "C", "G2", colours.white);
         }
 
 
         // Script name (with scrolling support)
-        display.setTextSize(2 + fontScale);
-        display.setTextColor(colours.green);
+        setDisplayText(2, colours.green);
         var nameY = displayHeight / 10 * 4;
-
-        if (script.name.length > maxCharacters) {
-            var displayText = script.name + "    ";
-            var startPos = nameScrollOffset % displayText.length;
-            var scrolledText = displayText.substring(startPos) + displayText.substring(0, startPos);
-            var visibleText = scrolledText.substring(0, maxCharacters);
-            display.setTextAlign('left', 'middle');
-            display.drawText(visibleText, 0, nameY);
-        } else {
-            display.setTextAlign('center', 'middle');
-            display.drawText(script.name, displayWidth / 2, nameY);
-        }
+        drawScrollingText(script.name, displayWidth / 2, nameY, nameScrollOffset);
 
         // Script description (with scrolling support)
-        display.setTextSize(1 + fontScale);
-        display.setTextColor(colours.white);
+        setDisplayText(1, colours.white);
         var descY = displayHeight / 10 * 5 + ((fontScale + 1) * 3) + 3;
-
-        if (script.description.length > maxCharacters) {
-            var displayText = script.description + "    ";
-            var startPos = descriptionScrollOffset % displayText.length;
-            var scrolledText = displayText.substring(startPos) + displayText.substring(0, startPos);
-            var visibleText = scrolledText.substring(0, maxCharacters);
-            display.setTextAlign('left', 'middle');
-            display.drawText(visibleText, 0, descY);
-        } else {
-            display.setTextAlign('center', 'middle');
-            display.drawText(script.description, displayWidth / 2, descY);
-        }
+        drawScrollingText(script.description, displayWidth / 2, descY, descriptionScrollOffset);
 
         // Status and version info
-        drawText(status.text, 1, "center", "G7", status.color);
-
-        if (script.version !== 'UNKNOWN') {
-            var installedVer = "None";
-            if (installedVersions[script.slug] && installedVersions[script.slug].version) {
-                installedVer = installedVersions[script.slug].version;
-            }
-            drawText("Available: " + script.version, 1, "center", "G8", colours.grey);
-
-            if (installedVer !== 'None') {
-                drawText("Installed: " + installedVer, 1, "center", "G9", colours.grey);
-            }
-        }
+        drawText(status.text, 1, "C", "G7", status.color);
+        drawVersionInfo(script, 8);
 
     }
 }
@@ -875,17 +833,17 @@ function displayInterfaceNew(statusLine1, statusLine2, forceUpdate) {
     console.log("Display Interface Update: |" + statusLine1 + "|" + statusLine2 + "|");
     if (!showMenu) {
         if (!appNameShown) {
-            drawText("Bruce App Store", 2, "center", "G1", BRUCE_PRICOLOR);
+            drawText("Bruce App Store", 2, "C", "G1", BRUCE_PRICOLOR);
             appNameShown = true;
         }
     }
 
     if (statusLine1 != currentStatusLine1) {
-        drawText(statusLine1, 1, "center", "G4", colours.cyan);
+        drawText(statusLine1, 1, "C", "G4", colours.cyan);
         currentStatusLine1 = statusLine1;
     }
     if (statusLine2 != currentStatusLine2) {
-        drawText(statusLine2, 1, "center", "G6", colours.white);
+        drawText(statusLine2, 1, "C", "G6", colours.white);
         currentStatusLine2 = statusLine2;
     }
 }
@@ -894,22 +852,17 @@ function drawText(text, size, x, y, textColour) {
     var titleHeight = 8 * (2 + fontScale);
     var titlePaddingBottom = 4;
     var totalRows = 9;
-    if (x == "center") {
-        x = displayWidth / 2;
-    }
+    if (x == "C") x = displayWidth / 2;
+    
     if (y.substring(0, 1) === 'G') {
         var lineNum = parseInt(y.substring(1));
-        if (lineNum == 1) {
-            y = titleHeight;
-        } else {
-            y = ((displayHeight - titleHeight - titlePaddingBottom) / (totalRows - 1) * (lineNum - 1)) + titleHeight + titlePaddingBottom;
-        }
+        y = lineNum == 1 ? titleHeight : 
+            ((displayHeight - titleHeight - titlePaddingBottom) / (totalRows - 1) * (lineNum - 1)) + titleHeight + titlePaddingBottom;
     }
 
     display.drawFillRect(0, y - 8 * (size + fontScale), displayWidth, 8 * (size + fontScale), colours.black);
+    setDisplayText(size, textColour, 'center');
     display.setTextAlign('center', 'bottom');
-    display.setTextColor(textColour);
-    display.setTextSize(size + fontScale);
     display.drawText(text, x, y);
 }
 
@@ -919,17 +872,16 @@ function drawText(text, size, x, y, textColour) {
 function installScript(script) {
     isDownloading = true;
     console.log("Starting installation of script: " + script.name);
-    displayInterfaceNew(script.name, "Connecting...", true);
+    displayInterfaceNew(script.name, "Connecting", true);
 
     try {
         // Check WiFi connection
-        if (!wifi.connected()) {
+        if (!checkWiFiConnection()) {
             isDownloading = false;
-            displayInterfaceNew("Error", "WiFi not connected");
             return;
         }
 
-        displayInterfaceNew(script.name, "Installing...");
+        displayInterfaceNew(script.name, "Installing");
         var success = 0;
         var errors = 0;
 
@@ -940,18 +892,15 @@ function installScript(script) {
 
         // Loop through the files
         for (var i = 0; i < files.length; i++) {
-            if (files[i] && typeof files[i] === 'object' && files[i].source && files[i].destination) {
-                var localFilePath = baseLocalDir + fullMetadata.category + '/' + files[i].destination.replace(/^\/+/, '');
-                var repoFilePath = (fullMetadata.path + files[i].source).replace(/^\/+/, '');
-            } else {
-                var localFilePath = baseLocalDir + fullMetadata.category + '/' + files[i].replace(/^\/+/, '');
-                var repoFilePath = (fullMetadata.path + files[i]).replace(/^\/+/, '');
-            }
+            var file = files[i];
+            var localFilePath = getLocalFilePath(file, baseLocalDir, fullMetadata.category);
+            var repoFilePath = (file && typeof file === 'object' && file.source) 
+                ? (fullMetadata.path + file.source).replace(/^\/+/, '')
+                : (fullMetadata.path + file).replace(/^\/+/, '');
 
             console.log("Downloading file " + (i + 1) + " of " + files.length + ": " + repoFilePath);
 
-            var url = ('https://raw.githubusercontent.com/' + fullMetadata.owner + '/' + fullMetadata.repo + '/' + fullMetadata.commit + '/' + repoFilePath).replace(/ /g, '%20');
-            url = checkURL(url);
+            var url = ('http://ghp.iceis.co.uk/service/manual/' + fullMetadata.owner + '/' + fullMetadata.repo + '/' + fullMetadata.commit + '/' + repoFilePath).replace(/ /g, '%20');
             var response = wifi.httpFetch(url, {
                 save: { fs: fileSystem, path: localFilePath, mode: "write" },
             });
@@ -959,7 +908,7 @@ function installScript(script) {
                 console.log("Size: " + response.length + " bytes");
                 console.log("Saved to: " + localFilePath);
                 console.log("Successfully downloaded: " + repoFilePath);
-                displayInterfaceNew(script.name, "Downloading " + (i + 1) + " of " + files.length + "...");
+                displayInterfaceNew(script.name, "Downloading " + (i + 1) + " of " + files.length);
 
                 success++;
             } else {
@@ -984,7 +933,7 @@ function installScript(script) {
         }
 
     } catch (e) {
-        displayInterfaceNew("Error", "Error (A): " + e.message);
+        displayInterfaceNew("Error", "Err (A): " + e.message);
     }
     isDownloading = false;
     clearPopupAfterDelay();
@@ -1014,12 +963,7 @@ function createUpdatesCategory() {
                     // Check each app in this category for updates
                     for (var i = 0; i < categoryData.apps.length; i++) {
                         var app = categoryData.apps[i];
-                        var installed = installedVersions[app.slug];
-
-                        var installedVersion = null;
-                        if (installed && installed.version) {
-                            installedVersion = installed.version;
-                        }
+                        var installedVersion = getInstalledVersion(app);
 
                         // Check if app is installed and has an update available
                         if (installedVersion && installedVersion !== app.version) {
@@ -1045,35 +989,23 @@ function createUpdatesCategory() {
 
         updatesAvailable.count = updatesAvailable.apps.length;
 
-        // Remove existing Updates category if present (pre-ES5 compatible)
-        var filteredCategories = [];
-        for (var k = 0; k < availableCategories.categories.length; k++) {
-            if (availableCategories.categories[k].slug !== "updates") {
-                filteredCategories.push(availableCategories.categories[k]);
-            }
-        }
-        availableCategories.categories = filteredCategories;
+        // Remove existing Updates category if present
+        availableCategories.categories = availableCategories.categories.filter(function(cat) {
+            return cat.slug !== "updates";
+        });
         availableCategories.totalCategories = availableCategories.categories.length;
 
         // Add Updates category if there are updates available
         if (updatesAvailable.apps.length > 0) {
-            var updateCategory = {
+            availableCategories.categories.unshift({
                 name: "Updates",
                 slug: "updates",
                 count: updatesAvailable.count
-            };
-
-            // Create new array with Updates category first, then existing categories
-            var newCategories = [updateCategory];
-            for (var j = 0; j < availableCategories.categories.length; j++) {
-                newCategories.push(availableCategories.categories[j]);
-            }
-
-            availableCategories.categories = newCategories;
-            availableCategories.totalCategories = availableCategories.categories.length;
+            });
+            availableCategories.totalCategories++;
         }
     } catch (e2) {
-        displayPopup("Error creating Updates category: " + e2.message);
+        displayPopup("Err: " + e2.message);
     }
 }
 
