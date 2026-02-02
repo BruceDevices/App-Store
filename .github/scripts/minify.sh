@@ -21,14 +21,29 @@ fi
 # Minify the JavaScript file using terser
 npx terser "App Store.js" \
   --compress \
-  --mangle reserved=['e1','e2','e3','e4','e5','e6','e7','e8','d9'] \
+  --mangle \
   --output "minified/App Store.js"
+
+  
 
 # Check if minification was successful
 if [ -f "minified/App Store.js" ] && [ -s "minified/App Store.js" ]; then
   echo "Minification successful!"
   echo "Original file size: $(wc -c < "App Store.js") bytes"
   echo "Minified file size: $(wc -c < "minified/App Store.js") bytes"
+  
+  # Run catch variable renaming on the minified file
+  echo "Applying catch variable renaming to minified file..."
+  node ".github/scripts/post-minify-rename-catch.js"
+  
+  if [ $? -eq 0 ]; then
+    echo "Catch variable renaming successful!"
+    echo "Original file size: $(wc -c < "App Store.js") bytes"
+    echo "Final file size: $(wc -c < "minified/App Store.js") bytes"
+  else
+    echo "Catch variable renaming failed"
+    exit 1
+  fi
 else
   echo "Minification failed - output file is missing or empty"
   exit 1
