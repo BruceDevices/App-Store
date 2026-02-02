@@ -32,6 +32,10 @@ if [ -f "minified/App Store.js" ] && [ -s "minified/App Store.js" ]; then
   echo "Original file size: $(wc -c < "App Store.js") bytes"
   echo "Minified file size: $(wc -c < "minified/App Store.js") bytes"
   
+  # Install @babel/core if not already installed
+  echo "Installing @babel/core for catch variable renaming..."
+  npm install --no-save @babel/core
+  
   # Run catch variable renaming on the minified file
   echo "Applying catch variable renaming to minified file..."
   node ".github/scripts/post-minify-rename-catch.js"
