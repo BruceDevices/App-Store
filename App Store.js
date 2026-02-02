@@ -426,11 +426,15 @@ function preloadCategoryFiles() {
         var categoryLastUpdated = category.lastUpdated || 0;
 
         // Find stored timestamp for this category
-        var timestampEntry = storedTimestamps.find(function(entry) {
-            return entry.slug === category.slug;
-        });
-        var storedLastUpdated = timestampEntry ? (timestampEntry.lastUpdated || 0) : 0;
-        var timestampIndex = timestampEntry ? storedTimestamps.indexOf(timestampEntry) : -1;
+        var storedLastUpdated = 0;
+        var timestampIndex = -1;
+        for (var t = 0; t < storedTimestamps.length; t++) {
+            if (storedTimestamps[t].slug === category.slug) {
+                storedLastUpdated = storedTimestamps[t].lastUpdated || 0;
+                timestampIndex = t;
+                break;
+            }
+        }
 
         // Check if cache file needs to be updated
         var needsDownload = categoryLastUpdated > storedLastUpdated;
