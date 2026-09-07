@@ -1,0 +1,51 @@
+name: Minify and Compile
+
+on:
+  push:
+    paths:
+      - 'App Store.js'
+  workflow_dispatch:
+
+jobs:
+  minify:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Make script executable
+      run: chmod +x ./.github/scripts/minify.sh
+    
+    - name: Run minification script
+      run: ./.github/scripts/minify.sh
+
+  compile:
+    needs: minify
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Compile to bytecode
+      run: |
+        docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work \
+          ghcr.io/brucedevices/compile-js:latest \
+          "App Store.js" "minified/App Store.js"
+
+    - name: Commit compiled bytecode
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add "App Store.bin" "minified/App Store.bin"
+        if git diff --cached --quiet 2>/dev/null; then
+          echo "No changes to compiled bytecode - skipping commit"
+        else
+          git commit -m "Compiled bytecode"
+          git push
+        fi
