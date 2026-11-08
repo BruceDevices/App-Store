@@ -18,7 +18,7 @@ var colours = {
 
 // Configuration constants
 
-var BASE_URL = "http://ghp.iceis.co.uk";
+var BASE_URL = "http://appstore.bruce.computer";
 var CATEGORIES_URL = BASE_URL + "/service/main/releases/categories.json";
 var SCRIPTS_DIR = "/BruceJS/", THEMES_DIR = "/Themes/";
 var VERSION_FILE = "/BruceAppStore/installed.json", CACHE_DIR = "/BruceAppStore/cache/", LAST_UPDATED_FILE = "/BruceAppStore/lastUpdated.json";
@@ -889,6 +889,116 @@ function drawText(text, size, x, y, textColour) {
 }
 
 /**
+ * Blocking Yes/No dialog. Next/Prev toggles, Select confirms, Esc = No.
+ * Returns true for Yes.
+ */
+function confirmDialog(lines, defaultYes) {
+    var yes = !!defaultYes;
+    var lineHeight = 8 * (1 + fontScale) + 4;
+    var startY = displayHeight / 2 - (lines.length * lineHeight) / 2 - lineHeight;
+    var drawPrompt = function () {
+        display.drawFillRect(0, 0, displayWidth, displayHeight, colours.black);
+        setDisplayText(1, colours.orange, 'center');
+        for (var i = 0; i < lines.length; i++) {
+            display.drawText(lines[i], displayWidth / 2, startY + i * lineHeight);
+        }
+        display.drawText((yes ? "> Yes <" : "  Yes  ") + "   " + (yes ? "  No  " : "> No <"), displayWidth / 2, startY + lines.length * lineHeight + lineHeight);
+    };
+    drawPrompt();
+    while (true) {
+        if (keyboard.getNextPress() || keyboard.getPrevPress()) {
+            yes = !yes;
+            drawPrompt();
+        } else if (keyboard.getSelPress()) {
+            return yes;
+        } else if (keyboard.getEscPress()) {
+            return false;
+        }
+        delay(50);
+    }
+}
+
+/**
+ * Compare dotted versions. Returns <0, 0, >0.
+ */
+function compareVersions(a, b) {
+    var pa = String(a).replace(/^v/i, '').split('.');
+    var pb = String(b).replace(/^v/i, '').split('.');
+    var len = Math.max(pa.length, pb.length);
+    for (var i = 0; i < len; i++) {
+        var na = parseInt(pa[i], 10) || 0;
+        var nb = parseInt(pb[i], 10) || 0;
+        if (na !== nb) return na - nb;
+    }
+    return 0;
+}
+
+/**
+ * Check script's requiredBruceVersion  against firmware version.
+ * Returns true if install should proceed.
+ * Beta firmware reports short commit hash (no dots) instead of release version.
+ */
+function checkRequiredBruceVersion (metadata) {
+    try {
+        if (!metadata || !metadata.requiredBruceVersion ) return true;
+        var required = String(metadata.requiredBruceVersion );
+        var current = String(device.getBruceVersion() || '');
+        var isRelease = /^v?\d+(\.\d+)+/.test(current);
+
+        if (!isRelease) {
+            return confirmDialog([
+                "Requires Bruce v" + required.replace(/^v/i, ''),
+                "Beta firmware: " + current,
+                "May cause issues.",
+                "Install anyway?"
+            ], false);
+        }
+        if (compareVersions(current, required) < 0) {
+            return confirmDialog([
+                "Requires Bruce v" + required.replace(/^v/i, ''),
+                "Installed: v" + current.replace(/^v/i, ''),
+                "May not work.",
+                "Install anyway?"
+            ], false);
+        }
+    } catch (e) {
+        console.log("checkRequiredBruceVersion  error: " + e.message);
+    }
+    return true;
+}
+
+/**
+ * If a downloaded file is .bin and a same-name .js exists, ask user whether to delete old .js
+ */
+function checkOldJsVersion(localFilePath) {
+    try {
+        if (!/\.bin$/i.test(localFilePath)) return;
+        var jsPath = localFilePath.replace(/\.bin$/i, '.js');
+        var slash = jsPath.lastIndexOf('/');
+        var dir = slash > 0 ? jsPath.substring(0, slash) : '/';
+        var jsName = jsPath.substring(slash + 1);
+
+        var entries = storage.readdir({ fs: fileSystem, path: dir }) || [];
+        var found = false;
+        for (var i = 0; i < entries.length; i++) {
+            var entryName = (typeof entries[i] === 'object') ? entries[i].name : entries[i];
+            if (entryName === jsName) { found = true; break; }
+        }
+        if (!found) return;
+
+        if (confirmDialog(["Old JS version found:", jsName, "Delete it?"], true)) {
+            if (storage.remove({ fs: fileSystem, path: jsPath })) {
+                console.log("Deleted old JS version: " + jsPath);
+            } else {
+                console.log("Failed to delete old JS version: " + jsPath);
+            }
+        }
+    } catch (e) {
+        console.log("checkOldJsVersion error: " + e.message);
+    }
+}
+
+/**
  * Download and install a script
  */
 function installScript(script) {
@@ -909,6 +1019,12 @@ function installScript(script) {
 
         // Download full metadata
         var fullMetadata = loadFullMetadata(script);
+        if (!checkRequiredBruceVersion (fullMetadata)) {
+            displayInterfaceNew("", "");
+            drawScriptView();
+            isDownloading = false;
+            return;
+        }
         var files = fullMetadata.files || [];
         var baseLocalDir = (fullMetadata.category === 'Themes') ? THEMES_DIR : SCRIPTS_DIR;
 
@@ -934,6 +1050,8 @@ function installScript(script) {
                 console.log("Successfully downloaded: " + repoFilePath);
                 displayInterfaceNew(script.n, "Downloading " + (i + 1) + " of " + files.length);
 
+                checkOldJsVersion(localFilePath);
+                displayInterfaceNew(script.n, "Downloading " + (i + 1) + " of " + files.length);
                 success++;
             } else {
                 console.log("Failed to download " + repoFilePath);
