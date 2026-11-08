@@ -933,7 +933,7 @@ function compareVersions(a, b) {
 /**
  * Check script's requiredBruceVersion  against firmware version.
  * Returns true if install should proceed.
- * Beta firmware reports short commit hash (no dots) instead of release version.
+ * Beta/dev firmware reports short commit hash or dev (no dots) instead of release version.
  */
 function checkRequiredBruceVersion (metadata) {
     try {
@@ -945,7 +945,7 @@ function checkRequiredBruceVersion (metadata) {
         if (!isRelease) {
             return confirmDialog([
                 "Requires Bruce v" + required.replace(/^v/i, ''),
-                "Beta firmware: " + current,
+                "Beta/dev firmware: " + current,
                 "May cause issues.",
                 "Install anyway?"
             ], false);
@@ -967,7 +967,7 @@ function checkRequiredBruceVersion (metadata) {
 /**
  * If a downloaded file is .bin and a same-name .js exists, ask user whether to delete old .js
  */
-function checkOldJsVersion(localFilePath) {
+function checkJsVersionOnBinDownload(localFilePath) {
     try {
         if (!/\.bin$/i.test(localFilePath)) return;
         var jsPath = localFilePath.replace(/\.bin$/i, '.js');
@@ -983,15 +983,15 @@ function checkOldJsVersion(localFilePath) {
         }
         if (!found) return;
 
-        if (confirmDialog(["Old JS version found:", jsName, "Delete it?"], true)) {
+        if (confirmDialog(["A .js version of script found:", jsName, "Delete it?"], true)) {
             if (storage.remove({ fs: fileSystem, path: jsPath })) {
-                console.log("Deleted old JS version: " + jsPath);
+                console.log("Deleted .js version: " + jsPath);
             } else {
-                console.log("Failed to delete old JS version: " + jsPath);
+                console.log("Failed to delete .js version: " + jsPath);
             }
         }
     } catch (e) {
-        console.log("checkOldJsVersion error: " + e.message);
+        console.log("checkJsVersionOnBinDownload error: " + e.message);
     }
 }
 
@@ -1047,7 +1047,7 @@ function installScript(script) {
                 console.log("Successfully downloaded: " + repoFilePath);
                 displayInterfaceNew(script.n, "Downloading " + (i + 1) + " of " + files.length);
 
-                checkOldJsVersion(localFilePath);
+                checkJsVersionOnBinDownload(localFilePath);
                 displayInterfaceNew(script.n, "Downloading " + (i + 1) + " of " + files.length);
                 success++;
             } else {
