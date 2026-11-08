@@ -17,7 +17,6 @@ var colours = {
 };
 
 // Configuration constants
-
 var BASE_URL = "http://appstore.bruce.computer";
 var CATEGORIES_URL = BASE_URL + "/service/main/releases/categories.json";
 var SCRIPTS_DIR = "/BruceJS/", THEMES_DIR = "/Themes/";
@@ -33,13 +32,11 @@ var descriptionScrollOffset = 0, nameScrollOffset = 0, lastScrollTime = 0;
 var menuOptions = [], fileSystem = "littlefs";
 var dirtyCategories = false, dirtyScripts = false, dirtyActionMenu = false;
 
-
 // Display configuration
 var displayWidth = display.width(), displayHeight = display.height();
 var fontScale = displayWidth > 300 ? 1 : 0;
 var maxCharacters = Math.trunc(displayWidth / (6 * (fontScale + 1)));
 var fontHeight1 = 8 * (1 + fontScale), fontHeight2 = 8 * (2 + fontScale);
-
 
 /**
  * Detect which file system to use based on bruce.conf existence
