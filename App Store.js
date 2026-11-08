@@ -6,7 +6,7 @@ var wifi = require("wifi");
 
 // Color palette
 var colours = {
-    black: display.color(0, 0, 1),
+    black: display.color(0, 0, 0),
     grey: display.color(127, 127, 127),
     white: display.color(255, 255, 255),
     green: display.color(0, 255, 0),
