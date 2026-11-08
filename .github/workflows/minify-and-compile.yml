@@ -34,6 +34,7 @@ jobs:
 
     - name: Compile to bytecode
       run: |
+        mkdir -p bin
         docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work \
           ghcr.io/brucedevices/compile-js:latest \
           "App Store.js" "bin/App Store.bin" \
