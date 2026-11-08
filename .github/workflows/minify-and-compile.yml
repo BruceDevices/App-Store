@@ -53,12 +53,17 @@ jobs:
           git push
         fi
 
-    - name: Invalidate proxy cache
-      env:
-        PROXY_CACHE_BUST_API_KEY: ${{ secrets.PROXY_CACHE_BUST_API_KEY }}
-      run: |
-        echo "Invalidating appstore cache..."
-        curl -X DELETE -H "Authorization: Bearer $PROXY_CACHE_BUST_API_KEY" http://appstore.bruce.computer/invalidate-cache/appstore
-        echo "Invalidating appstorebin cache..."
-        curl -X DELETE -H "Authorization: Bearer $PROXY_CACHE_BUST_API_KEY" http://appstore.bruce.computer/invalidate-cache/appstorebin
-        echo "Cache invalidation completed"
+  invalidate-cache:
+    needs: compile
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Invalidate proxy cache
+        env:
+          PROXY_CACHE_BUST_API_KEY: ${{ secrets.PROXY_CACHE_BUST_API_KEY }}
+        run: |
+          echo "Invalidating appstore cache..."
+          curl -X DELETE -H "Authorization: Bearer $PROXY_CACHE_BUST_API_KEY" http://appstore.bruce.computer/invalidate-cache/appstore
+          echo "Invalidating appstorebin cache..."
+          curl -X DELETE -H "Authorization: Bearer $PROXY_CACHE_BUST_API_KEY" http://appstore.bruce.computer/invalidate-cache/appstorebin
+          echo "Cache invalidation completed"
