@@ -36,10 +36,9 @@ jobs:
       run: |
         docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work \
           ghcr.io/brucedevices/compile-js:latest \
-          "App Store.js" "minified/App Store.js"
+          "minified/App Store.js"
         mkdir -p bin
-        mv "App Store.bin" "bin/App Store.bin"
-        mv "minified/App Store.bin" "bin/App Store.min.bin"
+        mv "minified/App Store.bin" "bin/App Store.bin"
 
     - name: Commit compiled bytecode
       run: |
